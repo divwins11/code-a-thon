@@ -18,3 +18,8 @@ This project was developed as part of a **Code-A-Thon / Hackathon**.
 - **Backend:** Python, Flask  
 - **Frontend:** HTML, CSS, JavaScript  
 - **Version Control:** Git & GitHub  
+Notes
+
+This project was built for educational and hackathon purposes.
+
+Future improvements can include authentication, database integration, and deployment.
