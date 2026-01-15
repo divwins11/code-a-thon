@@ -6,15 +6,99 @@ let currentTimeframe = 'daily'; // Default timeframe
  * AUTHENTICATION & ONBOARDING LOGIC
  */
 
-function goToOnboarding() {
-    const user = document.getElementById('username').value;
-    const pass = document.getElementById('password').value;
+// DOM Elements
+const userIn = document.getElementById('username');
+const passIn = document.getElementById('password');
+const loginBtn = document.getElementById('btn-login');
 
-    if (user && pass) {
-        document.getElementById('step-login').style.display = 'none';
-        document.getElementById('step-onboarding').style.display = 'block';
+// Init: Check inputs on load & Setup Immersive Effects
+document.addEventListener('DOMContentLoaded', () => {
+    if (userIn && passIn) {
+        userIn.addEventListener('input', validateLoginInputs);
+        passIn.addEventListener('input', validateLoginInputs);
+        validateLoginInputs(); // Initial check
+    }
+
+    // Immersive Effects
+    initParallax();
+    initMagneticButton();
+});
+
+function initParallax() {
+    const overlay = document.querySelector('.auth-overlay');
+    if (!overlay) return;
+
+    document.addEventListener('mousemove', (e) => {
+        const x = e.clientX / window.innerWidth;
+        const y = e.clientY / window.innerHeight;
+
+        // Move background slightly opposite to mouse
+        const moveX = (0.5 - x) * 20; // 20px max movement
+        const moveY = (0.5 - y) * 20;
+
+        // Update background position (preserving the grid size/repeat)
+        // We only want to shift the radial gradients, but CSS multiple backgrounds are hard to target individually via JS standard style.
+        // Easiest way: shift the whole container's background position.
+        overlay.style.backgroundPosition = `calc(50% + ${moveX}px) calc(50% + ${moveY}px)`;
+    });
+}
+
+function initMagneticButton() {
+    const btn = document.getElementById('btn-login');
+    if (!btn) return;
+
+    btn.addEventListener('mousemove', (e) => {
+        if (btn.classList.contains('btn-disabled')) return; // No magnetic if disabled
+
+        const rect = btn.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+
+        const deltaX = (x - centerX) / centerX;
+        const deltaY = (y - centerY) / centerY;
+
+        // Tilt Effect: Rotate X (up/down) and Y (left/right)
+        // Max tilt: 15deg
+        btn.style.transform = `perspective(1000px) rotateX(${-deltaY * 10}deg) rotateY(${deltaX * 10}deg) scale(1.05)`;
+    });
+
+    btn.addEventListener('mouseleave', () => {
+        btn.style.transform = 'perspective(1000px) rotateX(0) rotateY(0) scale(1)';
+    });
+}
+
+function validateLoginInputs() {
+    if (!userIn || !passIn || !loginBtn) return;
+
+    // Logic: Both > 3 chars
+    const isValid = userIn.value.length > 3 && passIn.value.length > 3;
+
+    if (isValid) {
+        loginBtn.classList.remove('btn-disabled');
+        loginBtn.disabled = false;
     } else {
-        alert("Please enter a username and password to continue.");
+        loginBtn.classList.add('btn-disabled');
+        loginBtn.disabled = true;
+    }
+}
+
+function handleLogin() {
+    const user = userIn.value;
+    const pass = passIn.value;
+
+    if (user.length > 3 && pass.length > 3) {
+        // Start Loading Animation
+        loginBtn.innerHTML = '<div class="btn-loader"></div>';
+        loginBtn.disabled = true; // Prevent double click
+
+        // Simulate API delay (1.5s)
+        setTimeout(() => {
+            document.getElementById('step-login').style.display = 'none';
+            document.getElementById('step-onboarding').style.display = 'block';
+        }, 1500);
     }
 }
 
@@ -80,9 +164,11 @@ function switchTab(tabName) {
  * DASHBOARD INITIALIZATION
  */
 async function initDashboard() {
+    console.log("Initializing dashboard...");
     try {
         const response = await fetch('/api/data');
         apiData = await response.json();
+        console.log("API Data received:", apiData);
 
         renderStats();
         renderPerformanceChart();
@@ -95,6 +181,9 @@ async function initDashboard() {
         // New Dashboard Functions
         renderAudienceMap();
         renderLanguages();
+
+        console.log("Rendering Gauge Section...");
+        renderGaugeSection();
 
     } catch (error) {
         console.error("Error loading dashboard data:", error);
@@ -284,8 +373,6 @@ function renderTopPosts() {
     `).join('');
 }
 
-
-
 function renderStats() {
     if (!apiData.stats) return;
 
@@ -362,4 +449,194 @@ function renderCollaborations() {
             <button style="width: 100%; padding: 10px; background: linear-gradient(135deg, #00f2ea, #a855f7); border: none; border-radius: 8px; color: white; font-weight: 600; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">Connect</button>
         </div>
     `).join('');
+}
+
+/**
+ * ENGAGEMENT WIDGET LOGIC
+ */
+let widgetHelper = {
+    gaugeCtx: null,
+    currentKey: 'last_7d',
+    currentValue: 0,
+    targetValue: 0,
+    animationFrame: null
+};
+
+function renderGaugeSection() {
+    // 1. Init Canvases
+    const gCanvas = document.getElementById('engagementGauge');
+
+    if (gCanvas) widgetHelper.gaugeCtx = gCanvas.getContext('2d');
+
+    // 2. Load Data for default key
+    switchWidgetPeriod('last_7d');
+}
+
+function switchWidgetPeriod(key) {
+    if (!apiData.engagement_widget || !apiData.engagement_widget[key]) return;
+
+    widgetHelper.currentKey = key;
+    const data = apiData.engagement_widget[key];
+
+    // Update UI Tabs
+    document.querySelectorAll('.w-tab').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById(`wt-${key}`);
+    if (btn) btn.classList.add('active');
+
+    // Update Text Details
+    updateWidgetText(data);
+
+    // Animate Gauge
+    animateGauge(data.value);
+}
+
+function updateWidgetText(data) {
+    const valEl = document.getElementById('w-value');
+    const statusTextEl = document.getElementById('w-status-text');
+    const benchmarkEl = document.getElementById('w-benchmark');
+    const trendEl = document.getElementById('w-trend');
+    const dateEl = document.getElementById('w-date');
+    const insightEl = document.getElementById('w-insight');
+    const actionEl = document.getElementById('w-action');
+
+    if (valEl) valEl.innerText = data.value + '%';
+
+    // Status Logic
+    let statusColor = '#facc15';
+    if (data.status === 'excellent') statusColor = '#10b981';
+    else if (data.status === 'average') statusColor = '#facc15';
+    else if (data.status === 'poor') statusColor = '#f43f5e';
+
+    if (statusTextEl) {
+        statusTextEl.innerText = data.status_label;
+        statusTextEl.style.color = statusColor;
+    }
+
+    if (benchmarkEl) benchmarkEl.innerText = data.benchmark_text;
+
+    // Trend
+    if (trendEl) {
+        const arrow = data.trend_dir === 'up' ? '↑' : '↓';
+        // "↑ 0.8% · Reels drove growth"
+        trendEl.innerText = `${arrow} ${data.trend_value}% · ${data.trend_reason}`;
+        trendEl.className = `trend-pill ${data.trend_dir}`;
+    }
+
+    if (dateEl) dateEl.innerText = data.date_range;
+    if (insightEl) insightEl.innerText = data.insight;
+
+    if (actionEl && data.action_hint) {
+        actionEl.innerText = data.action_hint;
+    }
+}
+
+function animateGauge(target) {
+    widgetHelper.targetValue = target;
+    const startTime = performance.now();
+    const startVal = widgetHelper.currentValue;
+    const duration = 1200; // Slower, smoother
+
+    function loop(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const ease = 1 - Math.pow(1 - progress, 3); // Cubic ease out
+
+        const current = startVal + (target - startVal) * ease;
+        widgetHelper.currentValue = current;
+
+        // 1. Draw Gauge Arc (Background + Value)
+        drawGauge(current);
+
+        // 2. Rotate DOM Needle (CSS)
+        const maxVal = 10;
+        const clamped = Math.min(current, maxVal);
+        const ratio = clamped / maxVal;
+        const angle = -90 + (ratio * 180); // -90deg to +90deg
+
+        const needle = document.getElementById('gauge-needle');
+        if (needle) {
+            // Anchor at bottom (-100% Y translate), Pivot at Top:85px
+            needle.style.transform = `translate(-50%, -100%) rotate(${angle}deg)`;
+        }
+
+        if (progress < 1) {
+            widgetHelper.animationFrame = requestAnimationFrame(loop);
+        }
+    }
+
+    if (widgetHelper.animationFrame) cancelAnimationFrame(widgetHelper.animationFrame);
+    widgetHelper.animationFrame = requestAnimationFrame(loop);
+}
+
+function drawGauge(value) {
+    const ctx = widgetHelper.gaugeCtx;
+    const canvas = document.getElementById('engagementGauge');
+    if (!ctx || !canvas) return;
+
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Adjusted Architecture for "Pivot A towards B"
+    const cx = width / 2;
+    const cy = 85;  // Moved UP (approx center)
+    const radius = 75; // Slightly reduced to fit top gap
+
+    ctx.clearRect(0, 0, width, height);
+
+    // 1. Background Track (Deep Glass)
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, Math.PI, 2 * Math.PI);
+    ctx.lineWidth = 16;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+    ctx.stroke();
+
+    // 2. Dynamic "Cool to Hot" Gradient
+    const maxVal = 10;
+    const clampedVal = Math.min(value, maxVal);
+    const ratio = clampedVal / maxVal;
+    const endAngle = Math.PI + (Math.PI * ratio);
+
+    const grad = ctx.createLinearGradient(0, 0, width, 0);
+
+    // Cool -> Hot Logic
+    if (value < 4) {
+        // Ice Cool (Cyan -> Blue)
+        grad.addColorStop(0, '#22d3ee');
+        grad.addColorStop(1, '#3b82f6');
+        setGlowColor('rgba(34, 211, 238, 0.3)'); // Cyan Glow
+    } else if (value < 7) {
+        // Electric (Blue -> Purple)
+        grad.addColorStop(0, '#3b82f6');
+        grad.addColorStop(1, '#a855f7');
+        setGlowColor('rgba(168, 85, 247, 0.3)'); // Purple Glow
+    } else {
+        // Hot (Purple -> Neon Pink)
+        grad.addColorStop(0, '#a855f7');
+        grad.addColorStop(1, '#ec4899');
+        setGlowColor('rgba(236, 72, 153, 0.4)'); // Pink Glow
+    }
+
+    // 3. Value Arc
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, Math.PI, endAngle);
+    ctx.lineWidth = 16;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = grad;
+
+    // Extra Neon Glow on the Arc itself
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = grad;
+    ctx.stroke();
+
+    // Reset Shadow
+    ctx.shadowBlur = 0;
+}
+
+function setGlowColor(color) {
+    const section = document.querySelector('.gauge-section');
+    if (section) {
+        // Dynamic drop-shadow on the container
+        section.style.filter = `drop-shadow(0 0 20px ${color})`;
+    }
 }
